@@ -91,10 +91,6 @@ BOOK_NAME_TO_CODE = {
   "Revelation"       => "REV"
 }
 
-
-
-FREE_SPANISH_BIBLE_ID = '482ddd53705278cc-01'
-
 # from api.bible
 API_PATH = "https://rest.api.bible/v1/bibles"
 
