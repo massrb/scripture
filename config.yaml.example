@@ -1,0 +1,9 @@
+bibles:
+  - bible_id: 482ddd53705278cc-01
+    mnemonic: FSPAN
+    name: "The New Testament in Spanish, Free Bible Version"
+  - bible_id: 592420522e16049f-01
+    mnemonic: REINAVAL
+    name: "Biblia Reina Valera 1909"
+api_key: xxxxxxxxxxxxxxxxx 
+recs_to_process: 2300

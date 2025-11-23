@@ -5,6 +5,9 @@ require "pathname"
 require 'net/http'
 require 'json'
 require "nokogiri"
+require "yaml"
+require 'optparse'
+require 'ostruct'
 
 FOHS_SPANISH = {
   "FAITHFULNESS" => "Fe",
@@ -38,6 +41,7 @@ BOOK_NAME_TO_CODE = {
   "Esther"           => "EST",
   "Job"              => "JOB",
   "Psalms"           => "PSA",
+  "Psalm"            => "PSA",
   "Proverbs"         => "PRO",
   "Ecclesiastes"     => "ECC",
   "Song of Solomon"  => "SNG",
@@ -91,7 +95,10 @@ BOOK_NAME_TO_CODE = {
 
 FREE_SPANISH_BIBLE_ID = '482ddd53705278cc-01'
 
+# from api.bible
 API_PATH = "https://rest.api.bible/v1/bibles"
+
+TABLE_NAME = 'scriptures'
 
 
 def fetch_passage(url, api_key)
@@ -104,13 +111,17 @@ def fetch_passage(url, api_key)
     http.request(request)
   end
 
+  if response.code.to_i != 200
+    puts response.inspect
+    raise "API Fetch failed with http code #{response.code}"
+  end
   return JSON.parse(response.body)
 end
 
-def db_insert(db, text, fohskey, book)
+def db_insert(db, text, fohskey, scripture_index)
   puts "INSERT!"
   begin
-    scripture_index = "(#{book} FSPAN)"
+    # scripture_index = "(#{book} FSPAN)"
 
     fohs = FOHS_SPANISH[fohskey]
     puts "#{fohskey}=#{fohs}"
@@ -142,194 +153,177 @@ def print_row_window(db, table, offset, label)
   end
 end
 
-# Base directory where all paths should resolve from
-BASE_DIR = "/Users/laruenceguild/source/kotlin/FOHSverseApp"
+class ScriptureInserter
 
-if ARGV.empty?
-  puts "Usage: ruby inspect_db.rb relative/path/to/database.db"
-  exit 1
-end
+  def initialize(options)
+    @db_path = options[:db_path]
+    @options = options
+    @config = YAML.load_file('config.yaml')
+    @mnemonic = @options[:bible_mnemonic].to_s
+    rec = @config['bibles'].find {|el| el['mnemonic'] == @mnemonic}
+    if rec
+      rec.keys.each{|k| @config[k] = rec[k]}
+    end
+    @bible_id = @config['bible_id']
+    @api_key = @config['api_key']
+    @recs_to_process = @config['recs_to_process']
 
-# The path passed in is treated as relative to BASE_DIR
-relative_path = ARGV[0]
-api_key = ARGV[1]
-
-db_path = File.expand_path(relative_path, BASE_DIR)
-
-unless File.exist?(db_path)
-  puts "Error: File not found: #{db_path}"
-  exit 1
-end
-
-begin
-  db = SQLite3::Database.new(db_path)
-  db.results_as_hash = true
-rescue SQLite3::Exception => e
-  puts "Could not open database: #{e}"
-  exit 1
-end
-
-puts "📘 Inspecting SQLite DB: #{db_path}"
-puts "----------------------------------------"
-
-tables = db.execute <<-SQL
-  SELECT name
-  FROM sqlite_master
-  WHERE type='table'
-  ORDER BY name;
-SQL
-
-if tables.empty?
-  puts "No tables found."
-  exit
-end
-
-tables.each do |row|
-  table = row["name"]
-  puts "\n=== 🗂️  Table: #{table} ==="
-
-  # 1️⃣ Full schema
-  puts "\n--- Schema ---"
-  schema_info = db.execute("PRAGMA table_info(#{table})")
-
-  schema_info.each do |col|
-    cid      = col["cid"]
-    name     = col["name"]
-    ctype    = col["type"]
-    notnull  = col["notnull"] == 1 ? "YES" : "NO"
-    default  = col["dflt_value"]
-    pk       = col["pk"] == 1 ? "YES" : "NO"
-
-    puts <<~FIELD
-      • Column: #{name}
-        - Type: #{ctype}
-        - Not Null: #{notnull}
-        - Default: #{default.inspect}
-        - Primary Key: #{pk}
-    FIELD
-  end
-
-  # 2️⃣ Row count
-  puts "--- Row Count ---"
-  begin
-    count = db.get_first_value("SELECT COUNT(*) FROM #{table}")
-    puts "Total rows: #{count}"
-  rescue SQLite3::Exception => e
-    puts "Error counting rows: #{e}"
-  end
-
-  # 3️⃣ Sample rows
-
-
-  puts "--- Sample Rows ---"
-
-  if table == "scriptures"
-    puts "📖 Printing all scriptureIndex ending with 'WEBUS' as a single group"
+    unless File.exist?(@db_path)
+      puts "Error: File not found: #{@db_path}"
+      exit 1
+    end
 
     begin
-      # Total row count for all scriptureIndex ending with 'WEBUS'
-      count = db.get_first_value("SELECT COUNT(*) FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)'")
-      puts "\n--- scriptureIndex ending in WEBUS (#{count} total rows, showing 5 sample rows) ---"
-
-      # NEW: get all distinct fohskey values for WEBUS rows
-      fohskeys = db.execute("SELECT DISTINCT fohskey FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)' ORDER BY fohskey")
-      fohs_list = fohskeys.map { |r| r['fohskey'] }.join(', ')
-
-      puts "FOHS Keys Found (#{fohskeys.length} types): #{fohs_list}"
-      puts "------------------------------------------------------------"
-
-      # Fetch 5 sample rows for the group
-      samples = db.execute("SELECT * FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)' LIMIT 2300")
-
-      if samples.empty?
-        puts "(no rows found)"
-      else
-        count = 0
-        samples.each_with_index do |r, i|
-          puts "Row #{i}: #{r.inspect}"
-
-          scripture_index = r["scriptureIndex"]  # get the field'
-          fohskey = r['fohskey']
-    
-          if scripture_index.nil? || scripture_index.strip.empty?
-            puts "\nRow #{i}: (no scriptureIndex)"
-            next
-          end
-
-          # Remove parentheses and version
-          parts = scripture_index.gsub(/[()]/, '').split
-          version = parts.pop       # 'WEBUS'
-          reference = parts.join(' ')  # e.g., "1 John 4:8"
-          cleaned = scripture_index.gsub(/[()]/, '').strip
-
-          # Find the chapter:verse token (last token before version)
-          chapter_verse = parts.pop   # e.g. "3:14"
-          book = parts.join(' ')
-          book_code = BOOK_NAME_TO_CODE[book]
-
-          chapter, verse = chapter_verse.split(':')
-
-          # 3:17 or 3:17-16
-          if verse =~ /(\d+)-(\d+)/
-            # JHN.13.34-JHN.13.35
-            scripture_ref = "#{book_code}.#{chapter}.#{$1}-#{book_code}.#{chapter}.#{$2}"
-          else
-            scripture_ref = "#{book_code}.#{chapter}.#{verse}"
-          end
-          puts scripture_ref
-
-          # URL encode
-          encoded_reference = URI.encode_www_form_component(reference)
-          
-          # Spanish Free Bible Version (API.Bible) Bible ID
-          bible_id = "482ddd53705278cc-01"
-          
-          # Build API URL
-          url = "#{API_PATH}/#{bible_id}/passages/#{scripture_ref}"
-          
-          # Print
-          puts "\nRow #{i}:"
-          puts "  scriptureIndex: #{scripture_index}"
-          puts "  Reference for API: #{reference}"
-          puts "  Encoded: #{encoded_reference}"
-          puts "  API URL: #{url}"
-
-
-          result = fetch_passage(url, api_key)
-          p result
-          html = result["data"]&.[]("content")
-          next if html.nil?
-          puts "HTML:"
-          p html
-          doc = Nokogiri::HTML.fragment(html)
-
-          # Remove all <span class="v"> tags
-          doc.css('span.v').remove
-
-          text = doc.text.strip
-          puts "message:#{text}"
-          target_index = "(#{book} #{chapter}:#{verse} FSPAN)"
-          # Query
-          row = db.get_first_row(
-            "SELECT * FROM scriptures WHERE scriptureIndex = ? AND fohskey = ?", 
-            [target_index, fohskey]
-          )
-
-          if row
-            puts "skip #{target_index}"
-          else
-            count += 1
-            db_insert(db, text, fohskey, "#{book} #{chapter}:#{verse}")
-            # exit if count >= 10
-          end
-        end
-      end
+      @db = SQLite3::Database.new(@db_path)
+      @db.results_as_hash = true
     rescue SQLite3::Exception => e
-      puts "Error reading WEBUS scriptureIndex rows: #{e}"
+      puts "Could not open database: #{e}"
+      exit 1
     end
-  else
-    # Non-scriptures tables: default sampling windows
-    print_row_window(db, table, 0, "First 5 rows (0–4)")
+  end
+
+  def print_summary
+    begin
+      @recs_to_process = @config['recs_to_process']
+      count = @db.get_first_value("SELECT COUNT(*) FROM #{TABLE_NAME}")
+      puts "Total rows: #{count} in table #{TABLE_NAME}"
+      # Total row count for all scriptureIndex ending with 'WEBUS'
+      count = @db.get_first_value("SELECT COUNT(*) FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)'")
+      fohskeys = @db.execute("SELECT DISTINCT fohskey FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)' ORDER BY fohskey")
+      fohs_list = fohskeys.map { |r| r['fohskey'] }.join(', ')
+      puts "FOHS Keys Found (#{fohskeys.length} types): #{fohs_list}\n"
+      
+
+    rescue SQLite3::Exception => e
+      puts "Error printing database summary: #{e}"
+    end
+  end
+
+  def source_records
+    samples = @db.execute("SELECT * FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)' LIMIT #{@recs_to_process}")
+    if samples.empty?
+      puts "no source rows found"
+    else
+      puts "\n--- scriptureIndex ending in WEBUS (#{samples.count} total rows - source rows) ---"
+    end
+    samples.each do |row|
+      
+      db_source_index = row["scriptureIndex"]  # get the field'
+      if db_source_index.nil? || db_source_index.strip.empty?
+        puts "\nRow #{i}: (no scriptureIndex)"
+        next
+      end
+
+      fohskey = row['fohskey']
+      parts = db_source_index.gsub(/[()]/, '').split
+      source_bible_version = parts.pop       # 'WEBUS'
+      reference = parts.join(' ')  # e.g., "1 John 4:8"
+      # cleaned = scripture_index.gsub(/[()]/, '').strip
+
+      # Find the chapter:verse token (last token before version)
+      chapter_verse = parts.pop   # e.g. "3:14"
+      book = parts.join(' ')
+
+      api_book_code = BOOK_NAME_TO_CODE[book]
+      chapter, verse = chapter_verse.split(':')
+      db_target_index = "(#{book} #{chapter}:#{verse} #{@mnemonic})"
+
+      db_match = @db.get_first_value(
+        "SELECT 1 FROM scriptures WHERE scriptureIndex = ? AND fohskey = ? LIMIT 1",
+        [db_target_index, fohskey]
+      ) ? true : false
+
+      # Query
+
+      # 3:17 or 3:17-16
+      if verse =~ /(\d+)-(\d+)/
+        # JHN.13.34-JHN.13.35
+        api_verse_code = "#{api_book_code}.#{chapter}.#{$1}-#{api_book_code}.#{chapter}.#{$2}"
+      else
+        api_verse_code = "#{api_book_code}.#{chapter}.#{verse}"
+      end
+
+      api_url = "#{API_PATH}/#{@bible_id}/passages/#{api_verse_code}"
+
+      yield OpenStruct.new(db_source_index: db_source_index, fohskey: fohskey, 
+                 bible_version: source_bible_version, api_book_code: api_book_code, 
+                 api_verse_code: api_verse_code, api_url: api_url, db_target_index: db_target_index,
+                 db_match: db_match)
+
+    end
+    puts "Processed #{samples.count} source records"
+  end
+
+  def process_rows
+    count = 0
+    insert_count = 0
+    begin
+      source_records do |rec|
+        count += 1
+        puts "*******************"
+        puts rec.inspect
+        if !rec.db_match
+          puts "Missing match for #{rec.db_target_index} - #{rec.fohskey}"
+          if @options[:insert]
+            puts "API URL: #{rec.api_url}"
+            result = fetch_passage(rec.api_url, @api_key)
+                 # p result
+            html = result["data"]&.[]("content")
+            
+            # next if html.nil?
+            puts "HTML:"
+            p html
+            if html.nil?
+              puts 'EXIT no result'
+              exit
+            end
+            doc = Nokogiri::HTML.fragment(html)
+
+            # Remove all <span class="v"> tags
+            doc.css('span.v').remove
+            text = doc.text.strip
+            db_insert(@db, text, rec.fohskey, rec.db_target_index)
+            insert_count += 1
+            if insert_count >= 100
+              puts "EXIT, inserted #{insert_count} records"
+              exit
+            end
+          end
+        else
+          p rec
+        end
+        exit if count >= 800
+      end
+    rescue StandardError => e
+      puts "Error processing rows: #{e}"
+      puts e.backtrace.first(20).join("\n")
+    end
   end
 
 end
+
+
+options = { insert: false }
+
+OptionParser.new do |opts|
+  opts.on("-b", "--bible MNEUMONIC", "Bible Mnuemonic") do |id|
+    puts 'mneumonic is ' + id.to_s
+    options[:bible_mnemonic] = id
+  end
+  opts.on("--insert", "Enable debug mode") do
+    options[:insert] = true
+  end
+  opts.on("-d", "--db PATH", "Path to DB") do |path|
+    options[:db_path] = path
+  end
+end.parse!
+
+if options[:bible_mnemonic].nil?
+  puts "Error: --bible is required (bible mnuemonic"
+  puts parser
+  exit 1
+end
+
+inserter = ScriptureInserter.new(options)
+inserter.process_rows
+

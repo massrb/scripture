@@ -29,9 +29,8 @@ if ARGV.empty?
   exit 1
 end
 
-# The path passed in is treated as relative to BASE_DIR
-relative_path = ARGV[0]
-db_path = File.expand_path(relative_path, BASE_DIR)
+mnemonic = ARGV[0]
+db_path = ARGV[1]
 
 unless File.exist?(db_path)
   puts "Error: File not found: #{db_path}"
@@ -129,14 +128,15 @@ tables.each do |row|
         rows = db.execute(<<-SQL)
         SELECT *
         FROM scriptures
-        WHERE scriptureIndex LIKE '%FSPAN%'
+        WHERE scriptureIndex LIKE '%#{mnemonic}%'
         ORDER BY rowid DESC
         LIMIT 1000
         SQL
 
         if rows.empty?
-          puts "(no rows found with FSPAN)"
+          puts "(no rows found with #{mnemonic})"
         else
+          puts "ROWS for #{mnemonic}"
           rows.each_with_index do |r, i|
             puts "Row #{i}: #{r.inspect}"
           end
@@ -144,7 +144,7 @@ tables.each do |row|
         end
 
       rescue SQLite3::Exception => e
-        puts "Error querying FSPAN rows: #{e}"
+        puts "Error querying #{mnemonic} rows: #{e}"
       end
 
     rescue SQLite3::Exception => e
