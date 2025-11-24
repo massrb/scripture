@@ -163,13 +163,16 @@ OptionParser.new do |opts|
   opts.on("--csv", "output CSV") do
     options[:csv] = true
   end
+  opts.on("-s", "--skip FIELDS", "CSV fields to ommit") do |flds|
+    options[:fields] = flds.split(/:/)
+  end
   opts.on("-d", "--db PATH", "Path to DB") do |path|
     options[:db_path] = path
   end
 end.parse!
 
-if options[:bible_mnemonic].nil?
-  puts "Error: --bible is required (bible mnuemonic"
+if options[:db_path].nil?
+  puts "Error: --db path to database is required"
   puts parser
   exit 1
 end

@@ -315,10 +315,15 @@ OptionParser.new do |opts|
 end.parse!
 
 if options[:bible_mnemonic].nil?
-  puts "Error: --bible is required (bible mnuemonic"
+  puts "Error: --bible mnemonic is required"
+  puts parser
+  exit 1
+elsif options[:db_path].nil?
+  puts "Error: --db path to database is required"
   puts parser
   exit 1
 end
+
 
 inserter = ScriptureInserter.new(options)
 inserter.process_rows
