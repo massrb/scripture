@@ -1,2 +1,7 @@
 # Ignore local configuration
 config.yaml
+
+Gemfile
+translator.rb
+/vendor/
+/translate/

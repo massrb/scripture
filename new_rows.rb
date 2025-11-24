@@ -9,6 +9,15 @@ require "yaml"
 require 'optparse'
 require 'ostruct'
 
+file = "translator.rb"
+
+if File.exist?(file)
+  require_relative file
+else
+  puts "Optional file not found: #{file}"
+end
+
+
 FOHS_SPANISH = {
   "FAITHFULNESS" => "Fe",
   "GENTLENESS"   => "Mansedumbre",
@@ -96,6 +105,8 @@ API_PATH = "https://rest.api.bible/v1/bibles"
 
 TABLE_NAME = 'scriptures'
 
+TRANSLATION_ENDPOINT = "https://libretranslate.com/translate"
+
 
 def fetch_passage(url, api_key)
   uri = URI(url)
@@ -114,12 +125,12 @@ def fetch_passage(url, api_key)
   return JSON.parse(response.body)
 end
 
-def db_insert(db, text, fohskey, scripture_index)
+def db_insert(db, text, fohskey, scripture_index, fohs=nil)
   puts "INSERT!"
   begin
     # scripture_index = "(#{book} FSPAN)"
 
-    fohs = FOHS_SPANISH[fohskey]
+    fohs = FOHS_SPANISH[fohskey] if fohs.nil?
     puts "#{fohskey}=#{fohs}"
     db.execute(
       "INSERT INTO scriptures (scriptureIndex, fohskey, fohs, text) VALUES (?, ?, ?, ?)",
@@ -152,11 +163,13 @@ end
 class ScriptureInserter
 
   def initialize(options)
+    @translator = Translator.new if defined?(Translator)
     @db_path = options[:db_path]
     @options = options
     @config = YAML.load_file('config.yaml')
     @mnemonic = @options[:bible_mnemonic].to_s
     rec = @config['bibles'].find {|el| el['mnemonic'] == @mnemonic}
+    @target_language = options[:target_language]
     if rec
       rec.keys.each{|k| @config[k] = rec[k]}
     end
@@ -242,12 +255,30 @@ class ScriptureInserter
       api_url = "#{API_PATH}/#{@bible_id}/passages/#{api_verse_code}"
 
       yield OpenStruct.new(db_source_index: db_source_index, fohskey: fohskey, 
-                 bible_version: source_bible_version, api_book_code: api_book_code, 
+                 text: row['text'], bible_version: source_bible_version, api_book_code: api_book_code, 
                  api_verse_code: api_verse_code, api_url: api_url, db_target_index: db_target_index,
                  db_match: db_match)
 
     end
     puts "Processed #{samples.count} source records"
+  end
+
+  def parse_result(result)
+    # p result
+    html = result["data"]&.[]("content")
+    
+    # next if html.nil?
+    puts "HTML:"
+    p html
+    if html.nil?
+      puts 'EXIT no result to parse'
+      exit
+    end
+    doc = Nokogiri::HTML.fragment(html)
+
+    # Remove all <span class="v"> tags
+    doc.css('span.v').remove
+    doc.text.strip
   end
 
   def process_rows
@@ -261,26 +292,18 @@ class ScriptureInserter
         if !rec.db_match
           puts "Missing match for #{rec.db_target_index} - #{rec.fohskey}"
           if @options[:insert]
-            puts "API URL: #{rec.api_url}"
-            result = fetch_passage(rec.api_url, @api_key)
-                 # p result
-            html = result["data"]&.[]("content")
-            
-            # next if html.nil?
-            puts "HTML:"
-            p html
-            if html.nil?
-              puts 'EXIT no result'
-              exit
+            if @translator
+              text = @translator.convert(rec.text)
+              fohs = @translator.convert(rec.fohskey)
+              db_insert(@db, text, rec.fohskey, rec.db_target_index, fohs)
+            else
+              puts "API URL: #{rec.api_url}"
+              result = fetch_passage(rec.api_url, @api_key)
+              text = parse_result(result)
+              db_insert(@db, text, rec.fohskey, rec.db_target_index)
             end
-            doc = Nokogiri::HTML.fragment(html)
-
-            # Remove all <span class="v"> tags
-            doc.css('span.v').remove
-            text = doc.text.strip
-            db_insert(@db, text, rec.fohskey, rec.db_target_index)
             insert_count += 1
-            if insert_count >= 100
+            if insert_count >= 3
               puts "EXIT, inserted #{insert_count} records"
               exit
             end
@@ -311,6 +334,9 @@ OptionParser.new do |opts|
   end
   opts.on("-d", "--db PATH", "Path to DB") do |path|
     options[:db_path] = path
+  end
+  opts.on("-t", "--target LANGUAGE", "Convert to target language") do |lang|
+    options[:target_language] = lang
   end
 end.parse!
 
