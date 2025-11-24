@@ -306,7 +306,7 @@ OptionParser.new do |opts|
     puts 'mneumonic is ' + id.to_s
     options[:bible_mnemonic] = id
   end
-  opts.on("--insert", "Enable debug mode") do
+  opts.on("--insert", "Enable DB insertions") do
     options[:insert] = true
   end
   opts.on("-d", "--db PATH", "Path to DB") do |path|
