@@ -4,36 +4,16 @@ require 'pathname'
 require 'optparse'
 
 
-# 3️⃣ Sample rows (multiple windows)
-def print_row_window(db, table, offset, label)
-  puts "--- #{label} ---"
-  begin
-    rows = db.execute("SELECT * FROM #{table} LIMIT 5 OFFSET #{offset}")
-
-    if rows.empty?
-      puts "(no rows in this range)"
-    else
-      rows.each_with_index do |row_hash, i|
-        puts "Row #{offset + i}: #{row_hash.inspect}"
-      end
-    end
-  rescue SQLite3::Exception => e
-    puts "Error reading rows: #{e}"
-  end
-end
-
-if ARGV.empty?
-  puts "Error: Missing args"
-  exit 1
-end
-
-mnemonic = ARGV[0]
-db_path = ARGV[1]
-
 class Inspector
 
-  def initialize(mnemonic,db_path)
-    @db_path = db_path
+  def initialize(options)
+    @db_path = options[:db_path]
+    @mnemonic = options[:mnemonic]
+    @check_nulls = options[:check_nulls]
+    if options[:csv]
+      @csv = true
+      @ignorable_fields = options[:ignorable_fields]
+    end
     unless File.exist?(@db_path)
       puts "Error: File not found: #{@db_path}"
       exit 1
@@ -56,15 +36,17 @@ class Inspector
     index_types.each do |type|
       puts "\n--- scriptureIndex type = #{type} (5 sample rows) ---"
 
-      samples = @db.execute("SELECT * FROM scriptures WHERE scriptureIndex LIKE ? LIMIT 5", ["% #{type}"])
+      samples = @db.execute("SELECT * FROM scriptures WHERE scriptureIndex LIKE ?", ["% #{type}"])
 
       if samples.empty?
         puts "(no rows found for this type)"
       else
         samples.each_with_index do |r, i|
           puts "Row #{i}: #{r.inspect}"
+          break if i >= 5
         end
       end
+      puts "Total Rows For #{type}: #{samples.size}"
     end
   end
 
@@ -122,19 +104,36 @@ class Inspector
     end
   end
 
-  def print_sample_rows
+   def print_sample_rows
     rows = @db.execute(<<-SQL)
       SELECT *
       FROM scriptures
       WHERE scriptureIndex LIKE '%#{@mnemonic}%'
       ORDER BY rowid DESC
       LIMIT 1000
-      SQL
+    SQL
 
     if rows.empty?
       puts "(no rows found with #{@mnemonic})"
+      return
+    end
+
+    if @csv
+      # --- CSV MODE ---
+      # Print header row (column names)
+      headers = rows.first.keys.reject { |k| k.is_a?(Integer) }
+      headers = headers - @ignorable_fields if @ignorable_fields.is_a?(Array)
+
+      # Print each row as CSV
+      puts headers.join(",")
+      rows.each do |row|
+        values = headers.map { |h| row[h].to_s.gsub(",", " ") }
+        puts values.join(",")
+      end
+
     else
-      puts "ROWS for #{mnemonic}"
+      # --- NORMAL MODE ---
+      puts "ROWS for #{@mnemonic}"
       rows.each_with_index do |r, i|
         puts "Row #{i}: #{r.inspect}"
       end
@@ -144,9 +143,27 @@ class Inspector
 
   def inspect_db
     begin
+
+      if @check_nulls
+        cols = @db.execute("PRAGMA table_info('scriptures')").map { |row| row["name"] }
+
+        # Build the WHERE clause: (col1 IS NULL OR col1 = '') OR (col2 IS NULL OR col2 = '') ...
+        conditions = cols.map { |c| "(#{c} IS NULL OR #{c} = '')" }.join(" OR ")
+
+        sql = "SELECT * FROM scriptures WHERE #{conditions}"
+        puts "SQL: " + sql
+        rows = @db.execute(sql)
+        puts rows.count.to_s
+        rows.each{|r| puts r.inspect }
+      elsif @mnemonic
+        print_sample_rows
+      else
+        print_all_sample_rows
+      end
      
     rescue SQLite3::Exception => e
-      puts "Error reading scriptureIndex samples: #{e}"
+      puts "Error inspecting database: #{e}"
+      puts e.backtrace.first(20).join("\n")
     end
   end
 
@@ -157,14 +174,16 @@ options = { csv: false }
 
 OptionParser.new do |opts|
   opts.on("-b", "--bible MNEUMONIC", "Bible Mnuemonic") do |id|
-    puts 'mneumonic is ' + id.to_s
-    options[:bible_mnemonic] = id
+    options[:mnemonic] = id
+  end
+  opts.on("--nulls", "check for blank or null fields") do
+    options[:check_nulls] = true
   end
   opts.on("--csv", "output CSV") do
     options[:csv] = true
   end
   opts.on("-s", "--skip FIELDS", "CSV fields to ommit") do |flds|
-    options[:fields] = flds.split(/:/)
+    options[:ignorable_fields] = flds.split(/:/)
   end
   opts.on("-d", "--db PATH", "Path to DB") do |path|
     options[:db_path] = path
@@ -177,9 +196,8 @@ if options[:db_path].nil?
   exit 1
 end
 
-
-ins = Inspector.new(mnemonic, db_path)
-ins.print_tables
+ins = Inspector.new(options)
+ins.inspect_db
 
 
    
