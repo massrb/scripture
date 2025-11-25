@@ -163,13 +163,15 @@ end
 class ScriptureInserter
 
   def initialize(options)
-    @translator = Translator.new if defined?(Translator)
     @db_path = options[:db_path]
+    @rebuild_db_path = options[:rebuild_db_path]
     @options = options
     @config = YAML.load_file('config.yaml')
     @mnemonic = @options[:bible_mnemonic].to_s
     rec = @config['bibles'].find {|el| el['mnemonic'] == @mnemonic}
     @target_language = options[:target_language]
+    @translator = Translator.new if defined?(Translator) && @target_language
+
     if rec
       rec.keys.each{|k| @config[k] = rec[k]}
     end
@@ -185,6 +187,10 @@ class ScriptureInserter
     begin
       @db = SQLite3::Database.new(@db_path)
       @db.results_as_hash = true
+      if @rebuild_db_path
+        @db_rebuild = SQLite3::Database.new(@rebuild_db_path)
+        @db_rebuild.results_as_hash = true
+      end
     rescue SQLite3::Exception => e
       puts "Could not open database: #{e}"
       exit 1
@@ -206,6 +212,12 @@ class ScriptureInserter
     rescue SQLite3::Exception => e
       puts "Error printing database summary: #{e}"
     end
+  end
+
+  def get_rebuild_text(rec)
+    row = @db_rebuild.execute("SELECT text FROM scriptures WHERE scriptureIndex = ? AND fohskey = ? LIMIT 1",
+      [rec.db_target_index, rec.fohskey]).first
+    row&.[]("text")
   end
 
   def source_records
@@ -242,7 +254,16 @@ class ScriptureInserter
         [db_target_index, fohskey]
       ) ? true : false
 
-      # Query
+      matching_row = @db.get_first_row(
+        "SELECT * FROM scriptures WHERE scriptureIndex = ? AND fohskey = ? LIMIT 1",
+        [db_target_index, fohskey]
+        )
+
+      db_match = !matching_row.nil?
+      if db_match
+        empty_text = (matching_row["text"].nil? || matching_row["text"].strip.empty? || 
+                      matching_row['fohs'].nil? || matching_row['fohs'].strip.empty?)
+      end
 
       # 3:17 or 3:17-16
       if verse =~ /(\d+)-(\d+)/
@@ -257,7 +278,7 @@ class ScriptureInserter
       yield OpenStruct.new(db_source_index: db_source_index, fohskey: fohskey, 
                  text: row['text'], bible_version: source_bible_version, api_book_code: api_book_code, 
                  api_verse_code: api_verse_code, api_url: api_url, db_target_index: db_target_index,
-                 db_match: db_match)
+                 db_match: db_match, empty_text: empty_text)
 
     end
     puts "Processed #{samples.count} source records"
@@ -289,13 +310,24 @@ class ScriptureInserter
         count += 1
         puts "*******************"
         puts rec.inspect
-        if !rec.db_match
-          puts "Missing match for #{rec.db_target_index} - #{rec.fohskey}"
+        if !rec.db_match || rec.empty_text
+          puts "Missing match for #{rec.db_target_index} - #{rec.fohskey} count: #{insert_count}"
           if @options[:insert]
-            if @translator
+            if @db_rebuild
+              text = get_rebuild_text(rec)
+              db_insert(@db, text, rec.fohskey, rec.db_target_index)
+            elsif @translator
               text = @translator.convert(rec.text)
               fohs = @translator.convert(rec.fohskey)
-              db_insert(@db, text, rec.fohskey, rec.db_target_index, fohs)
+              if rec.empty_text
+                puts "UPDATE text"
+                @db.execute(
+                  "UPDATE scriptures SET text = ?, fohs = ? WHERE scriptureIndex = ? AND fohskey = ?",
+                  [text, fohs, rec.db_target_index, rec.fohskey]
+                )
+              else
+                db_insert(@db, text, rec.fohskey, rec.db_target_index, fohs)
+              end
             else
               puts "API URL: #{rec.api_url}"
               result = fetch_passage(rec.api_url, @api_key)
@@ -303,7 +335,8 @@ class ScriptureInserter
               db_insert(@db, text, rec.fohskey, rec.db_target_index)
             end
             insert_count += 1
-            if insert_count >= 3
+            sleep(15) if (insert_count + 1) % 10 == 0
+            if insert_count >= 400
               puts "EXIT, inserted #{insert_count} records"
               exit
             end
@@ -311,7 +344,7 @@ class ScriptureInserter
         else
           p rec
         end
-        exit if count >= 800
+        exit if count >= 1000
       end
     rescue StandardError => e
       puts "Error processing rows: #{e}"
@@ -331,6 +364,9 @@ OptionParser.new do |opts|
   end
   opts.on("--insert", "Enable DB insertions") do
     options[:insert] = true
+  end
+  opts.on("-r", "--rebuild PATH", "Path to DB to rebuild from") do |path|
+    options[:rebuild_db_path] = path
   end
   opts.on("-d", "--db PATH", "Path to DB") do |path|
     options[:db_path] = path

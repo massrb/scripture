@@ -3,5 +3,8 @@ config.yaml
 
 Gemfile
 translator.rb
+scripture_save.db
+scripture.db
 /vendor/
 /translate/
+*.csv

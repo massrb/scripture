@@ -109,7 +109,7 @@ class Inspector
       SELECT *
       FROM scriptures
       WHERE scriptureIndex LIKE '%#{@mnemonic}%'
-      ORDER BY rowid DESC
+      ORDER BY id ASC
       LIMIT 1000
     SQL
 
