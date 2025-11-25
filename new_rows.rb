@@ -105,9 +105,6 @@ API_PATH = "https://rest.api.bible/v1/bibles"
 
 TABLE_NAME = 'scriptures'
 
-TRANSLATION_ENDPOINT = "https://libretranslate.com/translate"
-
-
 def fetch_passage(url, api_key)
   uri = URI(url)
 
