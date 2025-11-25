@@ -18,16 +18,29 @@ else
 end
 
 
-FOHS_SPANISH = {
-  "FAITHFULNESS" => "Fe",
-  "GENTLENESS"   => "Mansedumbre",
-  "GOODNESS"     => "Bondad",
-  "JOY"          => "Gozo",
-  "KINDNESS"     => "Amabilidad",
-  "LOVE"         => "Amor",
-  "PATIENCE"     => "Paciencia",
-  "PEACE"        => "Paz",
-  "SELF_CONTROL" => "Dominio propio"
+FOHS = {
+  REINAVAL:{
+    "FAITHFULNESS" => "Fe",
+    "GENTLENESS"   => "Mansedumbre",
+    "GOODNESS"     => "Bondad",
+    "JOY"          => "Gozo",
+    "KINDNESS"     => "Amabilidad",
+    "LOVE"         => "Amor",
+    "PATIENCE"     => "Paciencia",
+    "PEACE"        => "Paz",
+    "SELF_CONTROL" => "Dominio propio"
+  },
+  THAIKJV: {
+    "FAITHFULNESS"  => "ความซื่อสัตย์",
+    "GENTLENESS"    => "ความอ่อนโยน",
+    "GOODNESS"      => "ความดี",
+    "JOY"           => "ความชื่นชม",
+    "KINDNESS"      => "ความเมตตา",
+    "LOVE"          => "ความรัก",
+    "PATIENCE"      => "ความอดทน",
+    "PEACE"         => "ความสงบ",
+    "SELF_CONTROL"  => "การควบคุมตนเอง"
+  }
 }
 
 BOOK_NAME_TO_CODE = {
@@ -122,22 +135,6 @@ def fetch_passage(url, api_key)
   return JSON.parse(response.body)
 end
 
-def db_insert(db, text, fohskey, scripture_index, fohs=nil)
-  puts "INSERT!"
-  begin
-    # scripture_index = "(#{book} FSPAN)"
-
-    fohs = FOHS_SPANISH[fohskey] if fohs.nil?
-    puts "#{fohskey}=#{fohs}"
-    db.execute(
-      "INSERT INTO scriptures (scriptureIndex, fohskey, fohs, text) VALUES (?, ?, ?, ?)",
-      [scripture_index, fohskey, fohs, text]
-    )
-    puts "Row inserted successfully for #{scripture_index}!"
-  rescue SQLite3::Exception => e
-    puts "Error inserting row: #{e}"
-  end
-end
 
 # 3️⃣ Sample rows (multiple windows)
 def print_row_window(db, table, offset, label)
@@ -193,6 +190,24 @@ class ScriptureInserter
       exit 1
     end
   end
+
+  def db_insert(text, fohskey, scripture_index, fohs=nil)
+    puts "INSERT!"
+    begin
+      # scripture_index = "(#{book} FSPAN)"
+
+      fohs = FOHS[@mnemonic.to_sym][fohskey] if fohs.nil?
+      puts "#{fohskey}=#{fohs}"
+      @db.execute(
+        "INSERT INTO scriptures (scriptureIndex, fohskey, fohs, text) VALUES (?, ?, ?, ?)",
+        [scripture_index, fohskey, fohs, text]
+      )
+      puts "Row inserted successfully for #{scripture_index}!"
+    rescue SQLite3::Exception => e
+      puts "Error inserting row: #{e}"
+    end
+  end
+
 
   def print_summary
     begin
@@ -312,7 +327,7 @@ class ScriptureInserter
           if @options[:insert]
             if @db_rebuild
               text = get_rebuild_text(rec)
-              db_insert(@db, text, rec.fohskey, rec.db_target_index)
+              db_insert(text, rec.fohskey, rec.db_target_index)
             elsif @translator
               text = @translator.convert(rec.text)
               fohs = @translator.convert(rec.fohskey)
@@ -323,16 +338,16 @@ class ScriptureInserter
                   [text, fohs, rec.db_target_index, rec.fohskey]
                 )
               else
-                db_insert(@db, text, rec.fohskey, rec.db_target_index, fohs)
+                db_insert(text, rec.fohskey, rec.db_target_index, fohs)
               end
             else
               puts "API URL: #{rec.api_url}"
               result = fetch_passage(rec.api_url, @api_key)
               text = parse_result(result)
-              db_insert(@db, text, rec.fohskey, rec.db_target_index)
+              db_insert(text, rec.fohskey, rec.db_target_index)
             end
             insert_count += 1
-            sleep(15) if (insert_count + 1) % 10 == 0
+            # sleep(15) if (insert_count + 1) % 10 == 0
             if insert_count >= 400
               puts "EXIT, inserted #{insert_count} records"
               exit
