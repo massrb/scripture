@@ -9,39 +9,13 @@ require "yaml"
 require 'optparse'
 require 'ostruct'
 
-file = "translator.rb"
+TRANSLATION_FILE = "translator.rb"
 
-if File.exist?(file)
-  require_relative file
+if File.exist?(TRANSLATION_FILE)
+  require_relative TRANSLATION_FILE
 else
-  puts "Optional file not found: #{file}"
+  puts "Optional file not found: #{TRANSLATION_FILE}"
 end
-
-
-FOHS = {
-  REINAVAL:{
-    "FAITHFULNESS" => "Fe",
-    "GENTLENESS"   => "Mansedumbre",
-    "GOODNESS"     => "Bondad",
-    "JOY"          => "Gozo",
-    "KINDNESS"     => "Amabilidad",
-    "LOVE"         => "Amor",
-    "PATIENCE"     => "Paciencia",
-    "PEACE"        => "Paz",
-    "SELF_CONTROL" => "Dominio propio"
-  },
-  THAIKJV: {
-    "FAITHFULNESS"  => "ความซื่อสัตย์",
-    "GENTLENESS"    => "ความอ่อนโยน",
-    "GOODNESS"      => "ความดี",
-    "JOY"           => "ความชื่นชม",
-    "KINDNESS"      => "ความเมตตา",
-    "LOVE"          => "ความรัก",
-    "PATIENCE"      => "ความอดทน",
-    "PEACE"         => "ความสงบ",
-    "SELF_CONTROL"  => "การควบคุมตนเอง"
-  }
-}
 
 BOOK_NAME_TO_CODE = {
   "Genesis"          => "GEN",
@@ -123,7 +97,6 @@ def fetch_passage(url, api_key)
 
   request = Net::HTTP::Get.new(uri)
   request['api-key'] = api_key   # <-- header required by API.Bible
-  puts "USE KEY:<#{api_key}>"
   response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) do |http|
     http.request(request)
   end
@@ -133,25 +106,6 @@ def fetch_passage(url, api_key)
     raise "API Fetch failed with http code #{response.code}"
   end
   return JSON.parse(response.body)
-end
-
-
-# 3️⃣ Sample rows (multiple windows)
-def print_row_window(db, table, offset, label)
-  puts "--- #{label} ---"
-  begin
-    rows = db.execute("SELECT * FROM #{table} LIMIT 5 OFFSET #{offset}")
-
-    if rows.empty?
-      puts "(no rows in this range)"
-    else
-      rows.each_with_index do |row_hash, i|
-        puts "Row #{offset + i}: #{row_hash.inspect}"
-      end
-    end
-  rescue SQLite3::Exception => e
-    puts "Error reading rows: #{e}"
-  end
 end
 
 class ScriptureInserter
@@ -164,10 +118,19 @@ class ScriptureInserter
     @mnemonic = @options[:bible_mnemonic].to_s
     rec = @config['bibles'].find {|el| el['mnemonic'] == @mnemonic}
     @target_language = options[:target_language]
-    @translator = Translator.new if defined?(Translator) && @target_language
+    if @target_language
+      raise "Translation module is missing" unless defined?(Translator)
+      @translator = Translator.new
+      @translation_site = config[:translation_site]
+    end
 
+    # a translation that does not go through api.bible may have
+    # a null value for rec
     if rec
+      fohs_config = @config['FOHS']
       rec.keys.each{|k| @config[k] = rec[k]}
+      lang = @config['language']
+      @fohs_map = fohs_config[lang]
     end
     @bible_id = @config['bible_id']
     @api_key = @config['api_key']
@@ -192,12 +155,8 @@ class ScriptureInserter
   end
 
   def db_insert(text, fohskey, scripture_index, fohs=nil)
-    puts "INSERT!"
     begin
-      # scripture_index = "(#{book} FSPAN)"
-
-      fohs = FOHS[@mnemonic.to_sym][fohskey] if fohs.nil?
-      puts "#{fohskey}=#{fohs}"
+      fohs = @fohs_map[fohskey] if fohs.nil?
       @db.execute(
         "INSERT INTO scriptures (scriptureIndex, fohskey, fohs, text) VALUES (?, ?, ?, ?)",
         [scripture_index, fohskey, fohs, text]
@@ -208,24 +167,7 @@ class ScriptureInserter
     end
   end
 
-
-  def print_summary
-    begin
-      @recs_to_process = @config['recs_to_process']
-      count = @db.get_first_value("SELECT COUNT(*) FROM #{TABLE_NAME}")
-      puts "Total rows: #{count} in table #{TABLE_NAME}"
-      # Total row count for all scriptureIndex ending with 'WEBUS'
-      count = @db.get_first_value("SELECT COUNT(*) FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)'")
-      fohskeys = @db.execute("SELECT DISTINCT fohskey FROM scriptures WHERE scriptureIndex LIKE '%WEBUS)' ORDER BY fohskey")
-      fohs_list = fohskeys.map { |r| r['fohskey'] }.join(', ')
-      puts "FOHS Keys Found (#{fohskeys.length} types): #{fohs_list}\n"
-      
-
-    rescue SQLite3::Exception => e
-      puts "Error printing database summary: #{e}"
-    end
-  end
-
+  # row had null or blank fields
   def get_rebuild_text(rec)
     row = @db_rebuild.execute("SELECT text FROM scriptures WHERE scriptureIndex = ? AND fohskey = ? LIMIT 1",
       [rec.db_target_index, rec.fohskey]).first
@@ -329,8 +271,8 @@ class ScriptureInserter
               text = get_rebuild_text(rec)
               db_insert(text, rec.fohskey, rec.db_target_index)
             elsif @translator
-              text = @translator.convert(rec.text)
-              fohs = @translator.convert(rec.fohskey)
+              text = @translator.convert(rec.text, translation_site)
+              fohs = @translator.convert(rec.fohskey, translation_site)
               if rec.empty_text
                 puts "UPDATE text"
                 @db.execute(
@@ -348,15 +290,15 @@ class ScriptureInserter
             end
             insert_count += 1
             # sleep(15) if (insert_count + 1) % 10 == 0
-            if insert_count >= 400
-              puts "EXIT, inserted #{insert_count} records"
-              exit
-            end
+            # if insert_count >= 10
+            #   puts "EXIT, inserted #{insert_count} records"
+            #   exit
+            # end
           end
         else
-          p rec
+          # p rec
         end
-        exit if count >= 1000
+        # exit if count >= 1000
       end
     rescue StandardError => e
       puts "Error processing rows: #{e}"
@@ -371,7 +313,6 @@ options = { insert: false }
 
 OptionParser.new do |opts|
   opts.on("-b", "--bible MNEUMONIC", "Bible Mnuemonic") do |id|
-    puts 'mneumonic is ' + id.to_s
     options[:bible_mnemonic] = id
   end
   opts.on("--insert", "Enable DB insertions") do

@@ -2,8 +2,40 @@ bibles:
   - bible_id: 482ddd53705278cc-01
     mnemonic: FSPAN
     name: "The New Testament in Spanish, Free Bible Version"
+    language: SPANISH
   - bible_id: 592420522e16049f-01
     mnemonic: REINAVAL
     name: "Biblia Reina Valera 1909"
-api_key: xxxxxxxxxxxxxxxxx 
+    language: SPANISH
+  - bible_id: 2eb94132ad61ae75-01
+    mnemonic: THAIKJV
+    name: "Thai King James Version"
+    language: THAI
+api_key: xxxxxxxxxxxxxxxxxxx
+translation_site: https://example.com/xlate/eng-to-whatever
 recs_to_process: 2300
+
+FOHS:
+  SPANISH:
+    FAITHFULNESS: "Fe"
+    GENTLENESS: "Mansedumbre"
+    GOODNESS: "Bondad"
+    JOY: "Gozo"
+    KINDNESS: "Amabilidad"
+    LOVE: "Amor"
+    PATIENCE: "Paciencia"
+    PEACE: "Paz"
+    SELF_CONTROL: "Dominio propio"
+
+  THAI:
+    FAITHFULNESS: "ความซื่อสัตย์"
+    GENTLENESS: "ความอ่อนโยน"
+    GOODNESS: "ความดี"
+    JOY: "ความชื่นชม"
+    KINDNESS: "ความเมตตา"
+    LOVE: "ความรัก"
+    PATIENCE: "ความอดทน"
+    PEACE: "ความสงบ"
+    SELF_CONTROL: "การควบคุมตนเอง"
+
+
