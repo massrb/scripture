@@ -8,6 +8,7 @@ class Inspector
 
   def initialize(options)
     @db_path = options[:db_path]
+    @print_tables = options[:print_tables]
     @mnemonic = options[:mnemonic]
     @check_nulls = options[:check_nulls]
     if options[:csv]
@@ -44,6 +45,11 @@ class Inspector
         samples.each_with_index do |r, i|
           puts "Row #{i}: #{r.inspect}"
           break if i >= 5
+        end
+        if samples.size >= 2
+          samples.last(2).each_with_index do |r, k|
+            puts "End Row #{samples.size - 2 + k}: #{r.inspect}"
+          end
         end
       end
       puts "Total Rows For #{type}: #{samples.size}"
@@ -97,9 +103,6 @@ class Inspector
         puts "Total rows: #{count}"
       rescue SQLite3::Exception => e
         puts "Error counting rows: #{e}"
-      end
-      if table == "scriptures"
-        print_all_sample_rows
       end
     end
   end
@@ -157,6 +160,8 @@ class Inspector
         rows.each{|r| puts r.inspect }
       elsif @mnemonic
         print_sample_rows
+      elsif @print_tables
+        print_tables
       else
         print_all_sample_rows
       end
@@ -181,6 +186,9 @@ OptionParser.new do |opts|
   end
   opts.on("--csv", "output CSV") do
     options[:csv] = true
+  end
+  opts.on("--tables", "print TABLES") do
+    options[:print_tables] = true
   end
   opts.on("-s", "--skip FIELDS", "CSV fields to ommit") do |flds|
     options[:ignorable_fields] = flds.split(/:/)

@@ -13,3 +13,4 @@ scripture.db
 /outputs/
 fetch_scripture.rb
 scripture_test.db
+reindex.rb
