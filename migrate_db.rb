@@ -24,7 +24,7 @@ class Migrator
 
   def add_column
     unless @column_names.include?(LANGUAGE_KEY_COL)
-      db.execute <<~SQL
+      @db.execute <<~SQL
         ALTER TABLE #{TABLE}
         ADD COLUMN #{LANGUAGE_KEY_COL} TEXT;
       SQL
@@ -84,7 +84,6 @@ class Migrator
   end
 
 end
-
 migrator = Migrator.new(ARGV[0])
 migrator.add_column
 migrator.migrate

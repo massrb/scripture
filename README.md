@@ -129,3 +129,24 @@ To use the translator module:
   ruby inspect_db.rb  -d scripture.db THAIKJV -c
   ```
 
+---
+
+## Migration
+
+**Migration utility**
+
+The migration tool was used to add the languageKey field. 
+
+conversions are found in the config.yaml file. Use a copy of the database
+
+```
+cp scripture_FOHSkey_database.db scripture_FOHSkey_database_v2.db
+
+ruby migrate_db.rb scripture_FOHSkey_database_v2.db
+```
+```
+
+
+
+
+
