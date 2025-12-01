@@ -144,7 +144,7 @@ cp scripture_FOHSkey_database.db scripture_FOHSkey_database_v2.db
 
 ruby migrate_db.rb scripture_FOHSkey_database_v2.db
 ```
-```
+
 
 
 
